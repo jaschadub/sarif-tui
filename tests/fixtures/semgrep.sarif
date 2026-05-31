@@ -1,0 +1,34 @@
+{
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Semgrep",
+          "rules": [
+            { "id": "xss-risk", "defaultConfiguration": { "level": "warning" }, "help": { "text": "Escape output." } },
+            { "id": "hardcoded-secret", "defaultConfiguration": { "level": "error" } }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "xss-risk",
+          "message": { "text": "Unescaped output rendered to page." },
+          "locations": [
+            { "physicalLocation": { "artifactLocation": { "uri": "src/view.php" }, "region": { "startLine": 88 } } }
+          ]
+        },
+        {
+          "ruleId": "hardcoded-secret",
+          "level": "error",
+          "message": { "text": "Hardcoded API key." },
+          "suppressions": [ { "kind": "inSource", "justification": "test key" } ],
+          "locations": [
+            { "physicalLocation": { "artifactLocation": { "uri": "config.rs" }, "region": { "startLine": 19 } } }
+          ]
+        }
+      ]
+    }
+  ]
+}

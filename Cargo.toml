@@ -1,0 +1,32 @@
+[package]
+name = "sarif-tui"
+version = "0.1.0"
+edition = "2021"
+description = "Terminal UI for exploring SARIF static-analysis reports"
+license = "MIT"
+
+[lib]
+name = "sarif_tui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sarif-tui"
+path = "src/main.rs"
+
+[dependencies]
+ratatui = "0.29"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde-sarif = "0.8"
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+thiserror = "2"
+fuzzy-matcher = "0.3"
+arboard = "3"
+open = "5"
+flate2 = "1"
+chrono = { version = "0.4", features = ["serde", "clock"] }
+glob = "0.3"
+
+[dev-dependencies]
+tempfile = "3"

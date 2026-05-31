@@ -1,0 +1,19 @@
+{
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": { "driver": { "name": "Trivy" } },
+      "results": [
+        {
+          "ruleId": "CVE-2021-0001",
+          "level": "note",
+          "baselineState": "new",
+          "message": { "text": "Vulnerable dependency foo@1.0.0." },
+          "locations": [
+            { "physicalLocation": { "artifactLocation": { "uri": "Cargo.lock" }, "region": { "startLine": 5 } } }
+          ]
+        }
+      ]
+    }
+  ]
+}
