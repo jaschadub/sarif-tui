@@ -7,6 +7,8 @@ const HELP_TEXT: &str = "\
 
   j / down    move down
   k / up      move up
+  PgDn / PgUp page down / up
+  g / G       first / last (Home / End)
   /           search
   f           filter
   s           sort (severity / file / rule)

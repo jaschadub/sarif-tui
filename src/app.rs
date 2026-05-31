@@ -73,6 +73,8 @@ pub struct App {
     pub triage_state: crate::triage::TriageState,
     pub triage_path: std::path::PathBuf,
     pub reviewer: String,
+    /// Rows per screen, tracked from the findings viewport for PageUp/PageDown.
+    pub page: usize,
 }
 
 impl App {
@@ -95,6 +97,7 @@ impl App {
             triage_state: crate::triage::TriageState::new(),
             triage_path: std::path::PathBuf::from(crate::triage::DEFAULT_STATE_FILE),
             reviewer: "reviewer".to_string(),
+            page: 10,
         }
     }
 
@@ -114,6 +117,30 @@ impl App {
         }
     }
 
+    /// Page size, kept >= 1 so PageUp/PageDown always move at least one row.
+    pub fn set_page(&mut self, page: usize) {
+        self.page = page.max(1);
+    }
+
+    pub fn select_page_down(&mut self) {
+        if self.visible.is_empty() {
+            return;
+        }
+        self.selected = (self.selected + self.page).min(self.visible.len() - 1);
+    }
+
+    pub fn select_page_up(&mut self) {
+        self.selected = self.selected.saturating_sub(self.page);
+    }
+
+    pub fn select_first(&mut self) {
+        self.selected = 0;
+    }
+
+    pub fn select_last(&mut self) {
+        self.selected = self.visible.len().saturating_sub(1);
+    }
+
     pub fn toggle_raw(&mut self) {
         self.show_raw = !self.show_raw;
     }
@@ -124,6 +151,16 @@ impl App {
         } else {
             Mode::Help
         };
+    }
+
+    /// Number of distinct tools across all loaded findings (stable regardless
+    /// of filtering — used to decide whether to show the Runs/Tools pane).
+    pub fn distinct_tool_count(&self) -> usize {
+        self.findings
+            .iter()
+            .map(|f| f.tool_name.as_str())
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
     }
 
     /// Counts per tool over the currently-visible findings.
@@ -471,6 +508,19 @@ mod tests {
     }
 
     #[test]
+    fn distinct_tool_count_counts_tools() {
+        assert_eq!(app_for("codeql.sarif").distinct_tool_count(), 1);
+        let multi = App::new(
+            load_findings(&[
+                PathBuf::from("tests/fixtures/codeql.sarif"),
+                PathBuf::from("tests/fixtures/semgrep.sarif"),
+            ])
+            .unwrap(),
+        );
+        assert_eq!(multi.distinct_tool_count(), 2);
+    }
+
+    #[test]
     fn empty_app_has_no_selection() {
         let app = App::new(vec![]);
         assert!(app.selected_finding().is_none());
@@ -611,5 +661,29 @@ mod tests {
         app.set_triage_status(crate::sarif::TriageStatus::Confirmed, "t".into());
         app.clear_triage_status();
         assert_eq!(app.selected_finding().unwrap().triage, None);
+    }
+
+    #[test]
+    fn page_navigation_jumps_and_clamps() {
+        // 4 findings across two fixtures.
+        let findings = load_findings(&[
+            PathBuf::from("tests/fixtures/codeql.sarif"),
+            PathBuf::from("tests/fixtures/semgrep.sarif"),
+            PathBuf::from("tests/fixtures/trivy.sarif"),
+        ])
+        .unwrap();
+        let mut app = App::new(findings);
+        assert_eq!(app.visible.len(), 4);
+        app.set_page(2);
+        app.select_page_down();
+        assert_eq!(app.selected, 2);
+        app.select_page_down(); // 2 + 2 = 4 -> clamps to last index 3
+        assert_eq!(app.selected, 3);
+        app.select_page_up();
+        assert_eq!(app.selected, 1);
+        app.select_first();
+        assert_eq!(app.selected, 0);
+        app.select_last();
+        assert_eq!(app.selected, 3);
     }
 }

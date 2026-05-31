@@ -8,6 +8,12 @@ use ratatui::DefaultTerminal;
 /// raw mode, the alternate screen, and a panic hook that restores the terminal.
 pub fn run(mut terminal: DefaultTerminal, mut app: App) -> Result<()> {
     while !app.should_quit {
+        // Track the findings viewport height so PageUp/PageDown move a screenful.
+        // Top area is 55% of the frame; subtract the table border + header rows.
+        if let Ok(size) = terminal.size() {
+            let page = (size.height as usize * 55 / 100).saturating_sub(3);
+            app.set_page(page);
+        }
         terminal.draw(|f| ui::ui(f, &app))?;
         if let Event::Key(key) = event::read()? {
             if key.kind == KeyEventKind::Press {
@@ -150,6 +156,10 @@ fn handle_key(app: &mut App, code: KeyCode) {
                 KeyCode::Char('q') => app.should_quit = true,
                 KeyCode::Char('j') | KeyCode::Down => app.select_next(),
                 KeyCode::Char('k') | KeyCode::Up => app.select_prev(),
+                KeyCode::PageDown => app.select_page_down(),
+                KeyCode::PageUp => app.select_page_up(),
+                KeyCode::Home | KeyCode::Char('g') => app.select_first(),
+                KeyCode::End | KeyCode::Char('G') => app.select_last(),
                 KeyCode::Char('r') => app.toggle_raw(),
                 KeyCode::Char('?') => app.toggle_help(),
                 KeyCode::Char('/') => app.start_edit(EditTarget::Search),
