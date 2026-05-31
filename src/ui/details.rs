@@ -35,6 +35,20 @@ pub fn render_details(frame: &mut Frame, area: Rect, app: &App) {
         Line::from(vec![Span::styled("File:    ", bold), Span::raw(f.location_str())]),
         Line::from(vec![Span::styled("Message: ", bold), Span::raw(f.message.clone())]),
     ];
+    if let Some(t) = f.triage {
+        lines.push(Line::from(vec![
+            Span::styled("Triage:  ", bold),
+            Span::raw(t.as_str()),
+        ]));
+        if let Some(notes) = app.triage_state.notes_of(&f.fingerprint) {
+            if !notes.is_empty() {
+                lines.push(Line::from(vec![
+                    Span::styled("Notes:   ", bold),
+                    Span::raw(notes.to_string()),
+                ]));
+            }
+        }
+    }
     if let Some(b) = f.severity_bucket() {
         lines.push(Line::from(vec![
             Span::styled("CVSS:    ", bold),

@@ -83,6 +83,39 @@ pub fn write_list<W: Write>(w: &mut W, findings: &[Finding]) -> Result<()> {
     Ok(())
 }
 
+pub fn write_diff<W: Write>(w: &mut W, old: &[Finding], new: &[Finding]) -> Result<()> {
+    let d = crate::triage::diff::diff(old, new);
+    writeln!(w, "Diff summary:")?;
+    writeln!(w, "  new:       {}", d.new.len())?;
+    writeln!(w, "  fixed:     {}", d.fixed.len())?;
+    writeln!(w, "  unchanged: {}", d.unchanged.len())?;
+    if !d.new.is_empty() {
+        writeln!(w, "\nNew findings:")?;
+        for f in &d.new {
+            writeln!(
+                w,
+                "  + {:<6} {:<28} {}",
+                f.level.as_str(),
+                f.rule_id,
+                f.location_str()
+            )?;
+        }
+    }
+    if !d.fixed.is_empty() {
+        writeln!(w, "\nFixed findings:")?;
+        for f in &d.fixed {
+            writeln!(
+                w,
+                "  - {:<6} {:<28} {}",
+                f.level.as_str(),
+                f.rule_id,
+                f.location_str()
+            )?;
+        }
+    }
+    Ok(())
+}
+
 /// Resolve the file list for a subcommand, falling back to the global list.
 pub fn resolve_files(sub: &[String], global: &[String]) -> Vec<PathBuf> {
     let args = if sub.is_empty() { global } else { sub };
@@ -121,5 +154,17 @@ mod tests {
         assert!(out.contains("src/db.js:42"));
         assert!(out.contains("CodeQL"));
         assert_eq!(out.lines().count(), 1); // one finding -> one row
+    }
+
+    #[test]
+    fn diff_reports_new_and_fixed() {
+        let old = load_findings(&fx("codeql.sarif")).unwrap();
+        let new = load_findings(&fx("semgrep.sarif")).unwrap();
+        let mut buf = Vec::new();
+        write_diff(&mut buf, &old, &new).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert!(out.contains("new:       2"));
+        assert!(out.contains("fixed:     1"));
+        assert!(out.contains("unchanged: 0"));
     }
 }

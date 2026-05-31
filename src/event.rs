@@ -15,10 +15,25 @@ pub fn run(mut terminal: DefaultTerminal, mut app: App) -> Result<()> {
             }
         }
         if let Some(effect) = app.pending.take() {
-            app.status = perform_effect(&mut terminal, effect);
+            let msg = if let Effect::SaveTriage = effect {
+                match app.triage_save_payload() {
+                    Ok((path, content)) => match std::fs::write(&path, content) {
+                        Ok(()) => format!("Saved triage to {}", path.display()),
+                        Err(e) => format!("save failed: {e}"),
+                    },
+                    Err(e) => e,
+                }
+            } else {
+                perform_effect(&mut terminal, effect)
+            };
+            app.status = msg;
         }
     }
     Ok(())
+}
+
+fn now_rfc3339() -> String {
+    chrono::Utc::now().to_rfc3339()
 }
 
 fn perform_effect(terminal: &mut DefaultTerminal, effect: Effect) -> String {
@@ -51,6 +66,8 @@ fn perform_effect(terminal: &mut DefaultTerminal, effect: Effect) -> String {
                 Err(e) => e,
             }
         }
+        // Intercepted in `run` before reaching here (needs &app to serialize).
+        Effect::SaveTriage => String::new(),
     }
 }
 
@@ -95,21 +112,58 @@ fn handle_key(app: &mut App, code: KeyCode) {
                 _ => {}
             }
         }
-        Mode::Normal => match code {
-            KeyCode::Char('q') => app.should_quit = true,
-            KeyCode::Char('j') | KeyCode::Down => app.select_next(),
-            KeyCode::Char('k') | KeyCode::Up => app.select_prev(),
-            KeyCode::Char('r') => app.toggle_raw(),
-            KeyCode::Char('?') => app.toggle_help(),
-            KeyCode::Char('/') => app.start_edit(EditTarget::Search),
-            KeyCode::Char('f') => app.mode = Mode::Filter,
-            KeyCode::Char('s') => app.cycle_sort(),
-            KeyCode::Char('y') => app.request_copy(),
-            KeyCode::Char('o') => app.request_open_editor(),
-            KeyCode::Char('O') => app.request_open_source(),
-            KeyCode::Char('e') => app.request_export(),
+        Mode::Triage => match code {
+            KeyCode::Char('c') => {
+                app.set_triage_status(crate::sarif::TriageStatus::Confirmed, now_rfc3339())
+            }
+            KeyCode::Char('f') => {
+                app.set_triage_status(crate::sarif::TriageStatus::FalsePositive, now_rfc3339())
+            }
+            KeyCode::Char('r') => {
+                app.set_triage_status(crate::sarif::TriageStatus::NeedsReview, now_rfc3339())
+            }
+            KeyCode::Char('a') => {
+                app.set_triage_status(crate::sarif::TriageStatus::AcceptedRisk, now_rfc3339())
+            }
+            KeyCode::Char('u') => app.clear_triage_status(),
+            KeyCode::Esc | KeyCode::Char('t') => app.mode = Mode::Normal,
             _ => {}
         },
+        Mode::Normal => {
+            // While typing a triage note, route keys to the inline editor.
+            if app.editing == Some(EditTarget::Note) {
+                match code {
+                    KeyCode::Esc => {
+                        app.editing = None;
+                        app.buffer.clear();
+                    }
+                    KeyCode::Enter => app.finish_note(now_rfc3339()),
+                    KeyCode::Backspace => {
+                        app.buffer.pop();
+                    }
+                    KeyCode::Char(c) => app.buffer.push(c),
+                    _ => {}
+                }
+                return;
+            }
+            match code {
+                KeyCode::Char('q') => app.should_quit = true,
+                KeyCode::Char('j') | KeyCode::Down => app.select_next(),
+                KeyCode::Char('k') | KeyCode::Up => app.select_prev(),
+                KeyCode::Char('r') => app.toggle_raw(),
+                KeyCode::Char('?') => app.toggle_help(),
+                KeyCode::Char('/') => app.start_edit(EditTarget::Search),
+                KeyCode::Char('f') => app.mode = Mode::Filter,
+                KeyCode::Char('s') => app.cycle_sort(),
+                KeyCode::Char('y') => app.request_copy(),
+                KeyCode::Char('o') => app.request_open_editor(),
+                KeyCode::Char('O') => app.request_open_source(),
+                KeyCode::Char('e') => app.request_export(),
+                KeyCode::Char('t') => app.mode = Mode::Triage,
+                KeyCode::Char('n') => app.start_edit(EditTarget::Note),
+                _ => {}
+            }
+        }
     }
 }
 
@@ -169,5 +223,32 @@ mod tests {
         assert_eq!(a.visible.len(), 1);
         handle_key(&mut a, KeyCode::Esc);
         assert_eq!(a.mode, crate::app::Mode::Normal);
+    }
+
+    #[test]
+    fn t_then_f_marks_false_positive_and_saves() {
+        let mut a = app();
+        handle_key(&mut a, KeyCode::Char('t'));
+        assert_eq!(a.mode, crate::app::Mode::Triage);
+        handle_key(&mut a, KeyCode::Char('f'));
+        assert_eq!(
+            a.selected_finding().unwrap().triage,
+            Some(crate::sarif::TriageStatus::FalsePositive)
+        );
+        assert_eq!(a.pending, Some(crate::app::Effect::SaveTriage));
+        assert_eq!(a.mode, crate::app::Mode::Normal);
+    }
+
+    #[test]
+    fn n_edits_a_note() {
+        let mut a = app();
+        handle_key(&mut a, KeyCode::Char('n'));
+        assert_eq!(a.editing, Some(crate::app::EditTarget::Note));
+        for c in "hi".chars() {
+            handle_key(&mut a, KeyCode::Char(c));
+        }
+        handle_key(&mut a, KeyCode::Enter);
+        let fp = a.selected_finding().unwrap().fingerprint.clone();
+        assert_eq!(a.triage_state.notes_of(&fp), Some("hi"));
     }
 }

@@ -2,6 +2,7 @@ pub mod details;
 pub mod filters;
 pub mod findings;
 pub mod help;
+pub mod triage;
 
 use crate::app::{App, Mode};
 use ratatui::layout::{Constraint, Direction, Layout};
@@ -30,9 +31,12 @@ pub fn ui(frame: &mut Frame, app: &App) {
 
     if app.mode == Mode::Search {
         filters::render_search_line(frame, chunks[2], app);
+    } else if app.editing == Some(crate::app::EditTarget::Note) {
+        let text = format!("note> {}", app.buffer);
+        frame.render_widget(Paragraph::new(text), chunks[2]);
     } else {
         let status = if app.status.is_empty() {
-            "j/k move · / search · f filter · s sort · y copy · o edit · e export · ? help · q quit"
+            "j/k move · / search · f filter · s sort · y copy · o edit · e export · t triage · ? help · q quit"
                 .to_string()
         } else {
             app.status.clone()
@@ -46,6 +50,7 @@ pub fn ui(frame: &mut Frame, app: &App) {
     match app.mode {
         Mode::Help => help::render_help(frame, area),
         Mode::Filter => filters::render_filter_panel(frame, area, app),
+        Mode::Triage => triage::render_triage(frame, area),
         _ => {}
     }
 }

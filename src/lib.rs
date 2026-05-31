@@ -8,4 +8,5 @@ pub mod cli;
 pub mod event;
 pub mod filter;
 pub mod sarif;
+pub mod triage;
 pub mod ui;

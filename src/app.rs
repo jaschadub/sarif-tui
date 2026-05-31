@@ -10,6 +10,7 @@ pub enum Mode {
     Help,
     Search,
     Filter,
+    Triage,
 }
 
 /// Which text field the inline editor is currently editing.
@@ -18,6 +19,7 @@ pub enum EditTarget {
     Search,
     FilterRule,
     FilterPath,
+    Note,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,6 +49,7 @@ pub enum Effect {
     Copy(String),
     /// (filename, contents) pairs to write to disk.
     Export(Vec<(String, String)>),
+    SaveTriage,
 }
 
 pub struct App {
@@ -67,6 +70,9 @@ pub struct App {
     pub buffer: String,
     pub sort: SortKey,
     pub pending: Option<Effect>,
+    pub triage_state: crate::triage::TriageState,
+    pub triage_path: std::path::PathBuf,
+    pub reviewer: String,
 }
 
 impl App {
@@ -86,6 +92,9 @@ impl App {
             buffer: String::new(),
             sort: SortKey::None,
             pending: None,
+            triage_state: crate::triage::TriageState::new(),
+            triage_path: std::path::PathBuf::from(crate::triage::DEFAULT_STATE_FILE),
+            reviewer: "reviewer".to_string(),
         }
     }
 
@@ -248,6 +257,10 @@ impl App {
             EditTarget::Search => self.search_query.clone(),
             EditTarget::FilterRule => self.filters.rule_substr.clone(),
             EditTarget::FilterPath => self.filters.path_substr.clone(),
+            EditTarget::Note => self
+                .selected_fingerprint()
+                .and_then(|fp| self.triage_state.notes_of(&fp).map(str::to_string))
+                .unwrap_or_default(),
         };
         self.editing = Some(target);
         if target == EditTarget::Search {
@@ -289,7 +302,8 @@ impl App {
                 self.filters.path_substr = self.buffer.clone();
                 self.recompute_visible();
             }
-            None => {}
+            // Notes are committed via `finish_note` (needs a timestamp).
+            Some(EditTarget::Note) | None => {}
         }
         self.buffer.clear();
     }
@@ -343,6 +357,78 @@ impl App {
             ("sarif-export.md".to_string(), md),
         ]));
         self.status = format!("exporting {count} findings…");
+    }
+
+    /// Inject loaded triage state, its path, and the reviewer name (from main).
+    pub fn set_triage(
+        &mut self,
+        state: crate::triage::TriageState,
+        path: std::path::PathBuf,
+        reviewer: String,
+    ) {
+        self.triage_state = state;
+        self.triage_path = path;
+        self.reviewer = reviewer;
+    }
+
+    fn selected_fingerprint(&self) -> Option<String> {
+        self.selected_finding().map(|f| f.fingerprint.clone())
+    }
+
+    /// Set the selected finding's triage status (timestamp passed from caller).
+    pub fn set_triage_status(&mut self, status: crate::sarif::TriageStatus, timestamp: String) {
+        let Some(fp) = self.selected_fingerprint() else {
+            return;
+        };
+        let notes = self.triage_state.notes_of(&fp).unwrap_or("").to_string();
+        self.triage_state
+            .upsert(&fp, status, &self.reviewer, &notes, &timestamp);
+        if let Some(&i) = self.visible.get(self.selected) {
+            self.findings[i].triage = Some(status);
+        }
+        self.pending = Some(Effect::SaveTriage);
+        self.mode = Mode::Normal;
+    }
+
+    pub fn clear_triage_status(&mut self) {
+        let Some(fp) = self.selected_fingerprint() else {
+            return;
+        };
+        self.triage_state.remove(&fp);
+        if let Some(&i) = self.visible.get(self.selected) {
+            self.findings[i].triage = None;
+        }
+        self.pending = Some(Effect::SaveTriage);
+        self.mode = Mode::Normal;
+    }
+
+    /// Commit the note buffer onto the selected finding (timestamp from caller).
+    pub fn finish_note(&mut self, timestamp: String) {
+        if self.editing != Some(EditTarget::Note) {
+            return;
+        }
+        let note = self.buffer.clone();
+        if let Some(fp) = self.selected_fingerprint() {
+            let status = self
+                .triage_state
+                .status_of(&fp)
+                .unwrap_or(crate::sarif::TriageStatus::NeedsReview);
+            self.triage_state
+                .upsert(&fp, status, &self.reviewer, &note, &timestamp);
+            if let Some(&i) = self.visible.get(self.selected) {
+                self.findings[i].triage = Some(status);
+            }
+            self.pending = Some(Effect::SaveTriage);
+        }
+        self.editing = None;
+        self.buffer.clear();
+    }
+
+    /// Serialize triage state for the run loop to persist.
+    pub fn triage_save_payload(&self) -> Result<(std::path::PathBuf, String), String> {
+        serde_json::to_string_pretty(&self.triage_state)
+            .map(|s| (self.triage_path.clone(), s))
+            .map_err(|e| format!("serialize triage failed: {e}"))
     }
 }
 
@@ -481,5 +567,49 @@ mod tests {
                 line: Some(42)
             })
         );
+    }
+
+    #[test]
+    fn set_triage_status_marks_finding_and_requests_save() {
+        let mut app = app_for("codeql.sarif");
+        app.set_triage_status(
+            crate::sarif::TriageStatus::FalsePositive,
+            "2026-05-31T00:00:00Z".into(),
+        );
+        assert_eq!(
+            app.selected_finding().unwrap().triage,
+            Some(crate::sarif::TriageStatus::FalsePositive)
+        );
+        assert_eq!(app.pending, Some(Effect::SaveTriage));
+        let fp = app.selected_finding().unwrap().fingerprint.clone();
+        assert_eq!(
+            app.triage_state.status_of(&fp),
+            Some(crate::sarif::TriageStatus::FalsePositive)
+        );
+    }
+
+    #[test]
+    fn note_edit_persists_into_triage_state() {
+        let mut app = app_for("codeql.sarif");
+        app.start_edit(EditTarget::Note);
+        for c in "check later".chars() {
+            app.buffer.push(c);
+        }
+        app.finish_note("2026-05-31T00:00:00Z".into());
+        let fp = app.selected_finding().unwrap().fingerprint.clone();
+        assert_eq!(app.triage_state.notes_of(&fp), Some("check later"));
+        // A note with no prior status defaults to needs_review.
+        assert_eq!(
+            app.selected_finding().unwrap().triage,
+            Some(crate::sarif::TriageStatus::NeedsReview)
+        );
+    }
+
+    #[test]
+    fn clear_triage_removes_entry() {
+        let mut app = app_for("codeql.sarif");
+        app.set_triage_status(crate::sarif::TriageStatus::Confirmed, "t".into());
+        app.clear_triage_status();
+        assert_eq!(app.selected_finding().unwrap().triage, None);
     }
 }

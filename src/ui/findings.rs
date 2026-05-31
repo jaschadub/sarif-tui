@@ -1,5 +1,5 @@
 use crate::app::App;
-use crate::sarif::Severity;
+use crate::sarif::{Severity, TriageStatus};
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
@@ -16,6 +16,16 @@ fn severity_style(sev: Severity) -> Style {
     Style::default().fg(color)
 }
 
+fn triage_marker(t: Option<TriageStatus>) -> (&'static str, Color) {
+    match t {
+        Some(TriageStatus::Confirmed) => ("C", Color::Red),
+        Some(TriageStatus::FalsePositive) => ("F", Color::Green),
+        Some(TriageStatus::NeedsReview) => ("R", Color::Yellow),
+        Some(TriageStatus::AcceptedRisk) => ("A", Color::Blue),
+        None => (" ", Color::Gray),
+    }
+}
+
 /// Left pane: tools and their (visible) finding counts.
 pub fn render_tools(frame: &mut Frame, area: Rect, app: &App) {
     let items: Vec<ListItem> = app
@@ -30,7 +40,7 @@ pub fn render_tools(frame: &mut Frame, area: Rect, app: &App) {
 
 /// Right pane: the findings table.
 pub fn render_findings(frame: &mut Frame, area: Rect, app: &App) {
-    let header = Row::new(vec!["SEV", "RULE", "TOOL", "LOCATION", "MESSAGE"])
+    let header = Row::new(vec!["T", "SEV", "RULE", "TOOL", "LOCATION", "MESSAGE"])
         .style(Style::default().add_modifier(Modifier::BOLD));
 
     let rows: Vec<Row> = app
@@ -43,7 +53,9 @@ pub fn render_findings(frame: &mut Frame, area: Rect, app: &App) {
             } else {
                 Cell::from(f.level.as_str()).style(severity_style(f.level))
             };
+            let (mark, mcolor) = triage_marker(f.triage);
             Row::new(vec![
+                Cell::from(mark).style(Style::default().fg(mcolor)),
                 sev,
                 Cell::from(f.rule_id.clone()),
                 Cell::from(f.tool_name.clone()),
@@ -54,6 +66,7 @@ pub fn render_findings(frame: &mut Frame, area: Rect, app: &App) {
         .collect();
 
     let widths = [
+        Constraint::Length(1),
         Constraint::Length(6),
         Constraint::Length(26),
         Constraint::Length(10),
