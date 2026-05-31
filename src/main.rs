@@ -33,8 +33,16 @@ fn main() -> Result<()> {
             eprintln!("diff: implemented in Milestone 5");
         }
         None => {
-            // TUI launches here starting in Milestone 2.
-            eprintln!("TUI: implemented in Milestone 2 (run `summary` or `list` for now)");
+            let paths = cli::resolve_files(&[], &args.files);
+            let findings = if paths.is_empty() {
+                load_findings_stdin()?
+            } else {
+                load_findings(&paths)?
+            };
+            let terminal = ratatui::init();
+            let result = sarif_tui::event::run(terminal, sarif_tui::app::App::new(findings));
+            ratatui::restore();
+            result?;
         }
     }
     Ok(())
