@@ -1,5 +1,5 @@
-use crate::app::App;
-use crate::ui;
+use crate::app::{App, Effect};
+use crate::{actions, ui};
 use anyhow::Result;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::DefaultTerminal;
@@ -14,8 +14,44 @@ pub fn run(mut terminal: DefaultTerminal, mut app: App) -> Result<()> {
                 handle_key(&mut app, key.code);
             }
         }
+        if let Some(effect) = app.pending.take() {
+            app.status = perform_effect(&mut terminal, effect);
+        }
     }
     Ok(())
+}
+
+fn perform_effect(terminal: &mut DefaultTerminal, effect: Effect) -> String {
+    match effect {
+        Effect::Copy(text) => match actions::clipboard::copy(&text) {
+            Ok(()) => "Copied finding JSON to clipboard".to_string(),
+            Err(e) => e,
+        },
+        Effect::OpenSource { path } => match actions::open_editor::open_path(&path) {
+            Ok(()) => format!("Opened {path}"),
+            Err(e) => e,
+        },
+        Effect::Export(items) => {
+            for (name, content) in &items {
+                if let Err(e) = std::fs::write(name, content) {
+                    return format!("export failed for {name}: {e}");
+                }
+            }
+            let names: Vec<&str> = items.iter().map(|(n, _)| n.as_str()).collect();
+            format!("Exported to {}", names.join(", "))
+        }
+        Effect::OpenEditor { path, line } => {
+            // Suspend the TUI so an interactive editor can take the terminal.
+            ratatui::restore();
+            let res = actions::open_editor::open_in_editor(&path, line);
+            *terminal = ratatui::init();
+            let _ = terminal.clear();
+            match res {
+                Ok(()) => format!("Opened {path} in editor"),
+                Err(e) => e,
+            }
+        }
+    }
 }
 
 fn handle_key(app: &mut App, code: KeyCode) {
@@ -68,6 +104,10 @@ fn handle_key(app: &mut App, code: KeyCode) {
             KeyCode::Char('/') => app.start_edit(EditTarget::Search),
             KeyCode::Char('f') => app.mode = Mode::Filter,
             KeyCode::Char('s') => app.cycle_sort(),
+            KeyCode::Char('y') => app.request_copy(),
+            KeyCode::Char('o') => app.request_open_editor(),
+            KeyCode::Char('O') => app.request_open_source(),
+            KeyCode::Char('e') => app.request_export(),
             _ => {}
         },
     }

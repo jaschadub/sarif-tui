@@ -7,6 +7,14 @@ const HELP_TEXT: &str = "\
 
   j / down    move down
   k / up      move up
+  /           search
+  f           filter
+  s           sort (severity / file / rule)
+  y           copy finding JSON
+  o           open in $EDITOR
+  O           open source file
+  e           export visible findings
+  t / n       triage status / note
   r           toggle raw JSON in details
   ?           toggle this help
   q           quit

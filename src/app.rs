@@ -39,6 +39,16 @@ impl SortKey {
     }
 }
 
+/// A side effect requested by the pure App, performed by the run loop.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Effect {
+    OpenEditor { path: String, line: Option<u32> },
+    OpenSource { path: String },
+    Copy(String),
+    /// (filename, contents) pairs to write to disk.
+    Export(Vec<(String, String)>),
+}
+
 pub struct App {
     pub findings: Vec<Finding>,
     /// Indices into `findings` currently shown (after filter/search).
@@ -56,6 +66,7 @@ pub struct App {
     pub editing: Option<EditTarget>,
     pub buffer: String,
     pub sort: SortKey,
+    pub pending: Option<Effect>,
 }
 
 impl App {
@@ -74,6 +85,7 @@ impl App {
             editing: None,
             buffer: String::new(),
             sort: SortKey::None,
+            pending: None,
         }
     }
 
@@ -292,6 +304,46 @@ impl App {
             self.mode = Mode::Normal;
         }
     }
+
+    pub fn request_copy(&mut self) {
+        let json = self
+            .selected_finding()
+            .map(crate::actions::export::finding_to_json);
+        match json {
+            Some(Ok(j)) => self.pending = Some(Effect::Copy(j)),
+            Some(Err(e)) => self.status = format!("copy failed: {e}"),
+            None => self.status = "nothing selected".into(),
+        }
+    }
+
+    pub fn request_open_editor(&mut self) {
+        let info = self.selected_finding().map(|f| (f.path.clone(), f.line));
+        match info {
+            Some((Some(p), line)) => self.pending = Some(Effect::OpenEditor { path: p, line }),
+            Some((None, _)) => self.status = "finding has no file location".into(),
+            None => {}
+        }
+    }
+
+    pub fn request_open_source(&mut self) {
+        let path = self.selected_finding().and_then(|f| f.path.clone());
+        match path {
+            Some(p) => self.pending = Some(Effect::OpenSource { path: p }),
+            None => self.status = "finding has no file location".into(),
+        }
+    }
+
+    pub fn request_export(&mut self) {
+        let visible: Vec<&Finding> = self.visible.iter().map(|&i| &self.findings[i]).collect();
+        let count = visible.len();
+        let json = crate::actions::export::findings_to_json(&visible).unwrap_or_default();
+        let md = crate::actions::export::findings_to_markdown(&visible);
+        self.pending = Some(Effect::Export(vec![
+            ("sarif-export.json".to_string(), json),
+            ("sarif-export.md".to_string(), md),
+        ]));
+        self.status = format!("exporting {count} findings…");
+    }
 }
 
 #[cfg(test)]
@@ -392,5 +444,42 @@ mod tests {
         assert!(app.visible.len() < total);
         app.cycle_tool_filter(); // -> all again
         assert_eq!(app.visible.len(), total);
+    }
+
+    #[test]
+    fn request_copy_sets_pending_with_rule_id() {
+        let mut app = app_for("codeql.sarif");
+        app.request_copy();
+        match app.pending {
+            Some(Effect::Copy(ref j)) => assert!(j.contains("js/sql-injection")),
+            _ => panic!("expected Copy effect"),
+        }
+    }
+
+    #[test]
+    fn request_export_sets_two_files() {
+        let mut app = app_for("semgrep.sarif");
+        app.request_export();
+        match app.pending {
+            Some(Effect::Export(ref items)) => {
+                assert_eq!(items.len(), 2);
+                assert!(items.iter().any(|(n, _)| n.ends_with(".json")));
+                assert!(items.iter().any(|(n, _)| n.ends_with(".md")));
+            }
+            _ => panic!("expected Export effect"),
+        }
+    }
+
+    #[test]
+    fn request_open_editor_carries_path_and_line() {
+        let mut app = app_for("codeql.sarif");
+        app.request_open_editor();
+        assert_eq!(
+            app.pending,
+            Some(Effect::OpenEditor {
+                path: "src/db.js".into(),
+                line: Some(42)
+            })
+        );
     }
 }
