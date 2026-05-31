@@ -1,4 +1,5 @@
 pub mod details;
+pub mod filters;
 pub mod findings;
 pub mod help;
 
@@ -27,18 +28,25 @@ pub fn ui(frame: &mut Frame, app: &App) {
     findings::render_findings(frame, top[1], app);
     details::render_details(frame, chunks[1], app);
 
-    let status = if app.status.is_empty() {
-        "j/k move · r raw · ? help · q quit".to_string()
+    if app.mode == Mode::Search {
+        filters::render_search_line(frame, chunks[2], app);
     } else {
-        app.status.clone()
-    };
-    frame.render_widget(
-        Paragraph::new(status).block(Block::default().borders(Borders::NONE)),
-        chunks[2],
-    );
+        let status = if app.status.is_empty() {
+            "j/k move · / search · f filter · s sort · y copy · o edit · e export · ? help · q quit"
+                .to_string()
+        } else {
+            app.status.clone()
+        };
+        frame.render_widget(
+            Paragraph::new(status).block(Block::default().borders(Borders::NONE)),
+            chunks[2],
+        );
+    }
 
-    if app.mode == Mode::Help {
-        help::render_help(frame, area);
+    match app.mode {
+        Mode::Help => help::render_help(frame, area),
+        Mode::Filter => filters::render_filter_panel(frame, area, app),
+        _ => {}
     }
 }
 
@@ -60,5 +68,23 @@ mod tests {
         let content: String = buf.content().iter().map(|c| c.symbol()).collect();
         assert!(content.contains("CodeQL"));
         assert!(content.contains("js/sql-injection"));
+    }
+
+    #[test]
+    fn renders_filter_panel_in_filter_mode() {
+        let findings = load_findings(&[PathBuf::from("tests/fixtures/semgrep.sarif")]).unwrap();
+        let mut app = App::new(findings);
+        app.mode = crate::app::Mode::Filter;
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|f| ui(f, &app)).unwrap();
+        let content: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(content.contains("Filters"));
+        assert!(content.contains("hide suppressed"));
     }
 }
